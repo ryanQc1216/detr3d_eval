@@ -230,6 +230,7 @@ class Detr3D(MVXTwoStageDetector):
         imgs = imgs.unsqueeze(0)
         self.default_img_meta['lidar2img'] = cams_pose
         img_feats = self.extract_feat(img=imgs, img_metas=[self.default_img_meta])
+        # return img_feats # for flops check
         outs = self.pts_bbox_head(img_feats, [self.default_img_meta])
         # return outs['all_cls_scores'],  outs['all_bbox_preds']
         preds_dicts = self.pts_bbox_head.bbox_coder.decode(outs)

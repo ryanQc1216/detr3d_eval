@@ -213,6 +213,15 @@ class Detr3DTransformerDecoder(TransformerLayerSequence):
         return output, reference_points
 
 
+class Detr3dMul(BaseModule):
+    def __init__(self):
+        super(Detr3dMul, self).__init__()
+        pass
+
+    def forward(self, a, b):
+        return torch.mul(a, b)
+
+
 @ATTENTION.register_module()
 class Detr3DCrossAtten(BaseModule):
     """An attention module used in Detr3d. 
@@ -293,6 +302,8 @@ class Detr3DCrossAtten(BaseModule):
 
         self.init_weight()
 
+        self.pointwise_mul = Detr3dMul()
+
     def init_weight(self):
         """Default initialization for Parameters of Module."""
         constant_init(self.attention_weights, val=0., bias=0.)
@@ -366,7 +377,8 @@ class Detr3DCrossAtten(BaseModule):
         # mask = torch.nan_to_num(mask) # temp remove by ryan.qc
 
         attention_weights = attention_weights.sigmoid() * mask
-        output = output * attention_weights
+        # output = output * attention_weights # ryan.qc
+        output = self.pointwise_mul(output, attention_weights)
         output = output.sum(-1).sum(-1).sum(-1)
         output = output.permute(2, 0, 1)
 
@@ -416,6 +428,7 @@ def feature_sampling(mlvl_feats, reference_points, pc_range, img_metas):
     mask = mask.view(B, num_cam, 1, num_query, 1, 1).permute(0, 2, 3, 1, 4, 5)
     # mask = torch.nan_to_num(mask)  # temp remove by ryan.qc
     sampled_feats = []
+    all_query_linearInter_flops = 0
     for lvl, feat in enumerate(mlvl_feats):
         B, N, C, H, W = feat.size()
         feat = feat.view(B * N, C, H, W)
@@ -425,6 +438,17 @@ def feature_sampling(mlvl_feats, reference_points, pc_range, img_metas):
         # sampled_feat_ = tmp[:, :, 0].unsqueeze(-1).repeat(1, 1, num_query).unsqueeze(-1) # replace by ryan.qc for tmp onnx export
         sampled_feat = sampled_feat.view(B, N, C, num_query, 1).permute(0, 2, 3, 1, 4)
         sampled_feats.append(sampled_feat)
+
+        # add flops compute here
+        '''
+        value0 = (src_x_1 - src_x) * src[src_y_0, src_x_0, n] + (src_x - src_x_0) * src[src_y_0, src_x_1, n]
+        value1 = (src_x_1 - src_x) * src[src_y_1, src_x_0, n] + (src_x - src_x_0) * src[src_y_1, src_x_1, n]
+        dst[dst_y, dst_x, n] = int((src_y_1 - src_y) * value0 + (src_y - src_y_0) * value1)
+        '''
+        each_pixel_linearInter_flops = 6*C
+        all_query_linearInter_flops += each_pixel_linearInter_flops*B*num_query
+
+    print('all_query_linearInter_flops = %.5f MFLOPs, %.5f GFLOPs' % (all_query_linearInter_flops/1e6, all_query_linearInter_flops/1e9))
     sampled_feats = torch.stack(sampled_feats, -1)
     sampled_feats = sampled_feats.view(B, C, num_query, num_cam, 1, len(mlvl_feats))
     return reference_points_3d, sampled_feats, mask

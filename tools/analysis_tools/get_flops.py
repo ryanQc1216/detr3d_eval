@@ -5,13 +5,13 @@ from mmcv import Config, DictAction
 
 from mmdet3d.models import build_model
 import os
-
+import thop
 try:
     from mmcv.cnn import get_model_complexity_info
 except ImportError:
     raise ImportError('Please upgrade mmcv to >0.6.2')
 import numpy as np
-
+from tools.analysis_tools.ptflops.flops_counter import get_model_complexity_info as ptflops_get_model_complexity_info
 
 def parse_args():
     parser = argparse.ArgumentParser(description='Train a detector')
@@ -124,6 +124,7 @@ def main():
     use mmdetection flops tool
     '''
     # with torch.no_grad():
+    #     res = model(imgs, cams_pose)
     #     flops, params = get_model_complexity_info(model, input_shape, input_constructor=input_constructor)
     #     split_line = '=' * 30
     #     print(f'{split_line}\nInput shape: {input_shape}\n'
@@ -132,15 +133,15 @@ def main():
     '''
     use torchscript export
     '''
-    with torch.no_grad():
-        res = model(imgs, cams_pose)
-        model_export = torch.jit.trace(model,
-                                       (imgs, cams_pose),
-                                       strict=False)
-        torch.jit.save(model_export, './outputs/detr3d_export.pt')
-        graph = model_export.graph.copy()
-        torch._C._jit_pass_onnx_function_substitution(graph)
-        print(graph)
+    # with torch.no_grad():
+    #     res = model(imgs, cams_pose)
+    #     model_export = torch.jit.trace(model,
+    #                                    (imgs, cams_pose),
+    #                                    strict=False)
+    #     torch.jit.save(model_export, './outputs/detr3d_export.pt')
+    #     graph = model_export.graph.copy()
+    #     torch._C._jit_pass_onnx_function_substitution(graph)
+    #     print(graph)
 
     '''
     use onnx export
@@ -158,11 +159,34 @@ def main():
     use pytorch profile tools
     '''
     # with torch.no_grad():
-    #     with torch.autograd.profiler.profile(with_stack=False, enabled=True, use_cuda=False, record_shapes=False,
+    #     with torch.autograd.profiler.profile(with_stack=False, enabled=True, use_cuda=False, record_shapes=True,
     #                                          with_flops=True, profile_memory=True) as prof:
     #         outputs = model(imgs, cams_pose)
     #     print(prof.key_averages(group_by_stack_n=5).table(row_limit=-1))
 
+    '''
+    use thop profile
+    '''
+    # with torch.no_grad():
+    #     macs, params = thop.profile(model, (imgs, cams_pose), verbose=True)
+    #     from thop import clever_format
+    #     flops, params = clever_format([macs*2, params], "%.3f")
+    #     print('flops : %s' % flops)
+    #     print('params : %s' % params)
+    #     kk = 1
+
+    '''
+    use pt profile
+    '''
+    with torch.no_grad():
+        res = model(imgs, cams_pose)
+        macs, params = ptflops_get_model_complexity_info(model, input_shape,
+                                                         input_constructor=input_constructor,
+                                                         as_strings=True,
+                                                         ignore_modules = [''],
+                                                         print_per_layer_stat=True, verbose=True)
+        print('{:<30}  {:<8}'.format('Computational complexity: ', macs))
+        print('{:<30}  {:<8}'.format('Number of parameters: ', params))
 
 if __name__ == '__main__':
     main()
